@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPlugin};
+use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pane {
@@ -72,7 +72,8 @@ fn main() {
         .insert_resource(make_dock_state())
         .insert_resource(make_tile_scene())
         .add_systems(Startup, setup)
-        .add_systems(Update, ui_system)
+        // IMPORTANT: run egui code inside the egui pass schedule.
+        .add_systems(EguiPrimaryContextPass, ui_system)
         .run();
 }
 
@@ -149,8 +150,10 @@ fn ui_system(
         });
     });
 
-    let tiles_origin = ctx.available_rect().min;
+    let mut tiles_origin = egui::Pos2::ZERO;
     egui::CentralPanel::default().show(ctx, |ui| {
+        // IMPORTANT: only query layout/available rect *inside* the egui run.
+        tiles_origin = ui.available_rect_before_wrap().min;
         let DockState { tree, behavior } = &mut *dock;
         tree.ui(behavior, ui);
     });
