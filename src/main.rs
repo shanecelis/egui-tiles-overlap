@@ -7,6 +7,12 @@ enum Pane {
     Debug,
 }
 
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+enum ClickMode {
+    OverlapAll,
+    TopmostOnly,
+}
+
 #[derive(Resource)]
 struct DockState {
     tree: egui_tiles::Tree<Pane>,
@@ -71,7 +77,9 @@ fn main() {
         .add_plugins(EguiPlugin::default())
         .insert_resource(make_dock_state())
         .insert_resource(make_tile_scene())
+        .insert_resource(ClickMode::TopmostOnly)
         .add_systems(Startup, setup)
+        .add_systems(Update, toggle_click_mode)
         // IMPORTANT: run egui code inside the egui pass schedule.
         .add_systems(EguiPrimaryContextPass, ui_system)
         .run();
@@ -79,6 +87,17 @@ fn main() {
 
 fn setup(mut commands: Commands) {
     commands.spawn(Camera2d);
+}
+
+fn toggle_click_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<ClickMode>) {
+    if !keys.just_pressed(KeyCode::Space) {
+        return;
+    }
+
+    *mode = match *mode {
+        ClickMode::OverlapAll => ClickMode::TopmostOnly,
+        ClickMode::TopmostOnly => ClickMode::OverlapAll,
+    };
 }
 
 fn make_dock_state() -> DockState {
@@ -127,6 +146,7 @@ fn ui_system(
     mut contexts: EguiContexts,
     mut dock: ResMut<DockState>,
     mut scene: ResMut<TileScene>,
+    click_mode: Res<ClickMode>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -134,7 +154,13 @@ fn ui_system(
 
     egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Click on overlapping tiles (topmost tile should change).");
+            ui.label("Click on overlapping tiles.");
+            ui.separator();
+            let mode_text = match *click_mode {
+                ClickMode::OverlapAll => "mode: overlap-all (SPACE toggles)",
+                ClickMode::TopmostOnly => "mode: topmost-only (SPACE toggles)",
+            };
+            ui.monospace(mode_text);
             ui.separator();
             ui.monospace(format!(
                 "A:{}  B:{}  C:{}",
@@ -161,10 +187,15 @@ fn ui_system(
     // Draw the overlapping tiles over the "Scene" pane area.
     // Note: This is intentionally NOT using egui's normal widget click handling.
     // We'll do naïve global hit-testing below (so overlaps will trigger multiple updates).
-    draw_tiles_overlay(ctx, tiles_origin, &mut scene);
+    draw_tiles_overlay(ctx, tiles_origin, *click_mode, &mut scene);
 }
 
-fn draw_tiles_overlay(ctx: &egui::Context, origin: egui::Pos2, scene: &mut TileScene) {
+fn draw_tiles_overlay(
+    ctx: &egui::Context,
+    origin: egui::Pos2,
+    click_mode: ClickMode,
+    scene: &mut TileScene,
+) {
     // Find the click positions (if any) this frame.
     // This is intentionally "global" and does not respect widget consumption.
     let (left_click_pos, right_click_pos) = ctx.input(|i| {
@@ -215,25 +246,52 @@ fn draw_tiles_overlay(ctx: &egui::Context, origin: egui::Pos2, scene: &mut TileS
             });
     }
 
-    // Topmost-only handling: scan tiles from top to bottom (reverse draw order),
-    // and apply the click to the first tile whose rect contains the pointer.
+    // Click handling:
+    // - Overlap-all: apply to every tile under the pointer.
+    // - Topmost-only: scan tiles from top to bottom (reverse draw order) and stop on first hit.
     if let Some(pos) = left_click_pos {
-        for i in (0..scene.tiles.len()).rev() {
-            let min = origin + scene.tiles[i].local_pos.to_vec2();
-            let rect = egui::Rect::from_min_size(min, scene.tiles[i].size);
-            if rect.contains(pos) {
-                scene.tiles[i].value += 1;
-                break;
+        match click_mode {
+            ClickMode::OverlapAll => {
+                for tile in &mut scene.tiles {
+                    let min = origin + tile.local_pos.to_vec2();
+                    let rect = egui::Rect::from_min_size(min, tile.size);
+                    if rect.contains(pos) {
+                        tile.value += 1;
+                    }
+                }
+            }
+            ClickMode::TopmostOnly => {
+                for i in (0..scene.tiles.len()).rev() {
+                    let min = origin + scene.tiles[i].local_pos.to_vec2();
+                    let rect = egui::Rect::from_min_size(min, scene.tiles[i].size);
+                    if rect.contains(pos) {
+                        scene.tiles[i].value += 1;
+                        break;
+                    }
+                }
             }
         }
     }
     if let Some(pos) = right_click_pos {
-        for i in (0..scene.tiles.len()).rev() {
-            let min = origin + scene.tiles[i].local_pos.to_vec2();
-            let rect = egui::Rect::from_min_size(min, scene.tiles[i].size);
-            if rect.contains(pos) {
-                scene.tiles[i].value -= 1;
-                break;
+        match click_mode {
+            ClickMode::OverlapAll => {
+                for tile in &mut scene.tiles {
+                    let min = origin + tile.local_pos.to_vec2();
+                    let rect = egui::Rect::from_min_size(min, tile.size);
+                    if rect.contains(pos) {
+                        tile.value -= 1;
+                    }
+                }
+            }
+            ClickMode::TopmostOnly => {
+                for i in (0..scene.tiles.len()).rev() {
+                    let min = origin + scene.tiles[i].local_pos.to_vec2();
+                    let rect = egui::Rect::from_min_size(min, scene.tiles[i].size);
+                    if rect.contains(pos) {
+                        scene.tiles[i].value -= 1;
+                        break;
+                    }
+                }
             }
         }
     }
