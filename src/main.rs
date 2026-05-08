@@ -4,6 +4,9 @@ use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pane {
     Scene,
+    D,
+    E,
+    F,
     Debug,
 }
 
@@ -19,13 +22,76 @@ struct DockState {
     behavior: DockBehavior,
 }
 
-#[derive(Default)]
-struct DockBehavior;
+struct DockBehavior {
+    d: RoundRectPane,
+    e: RoundRectPane,
+    f: RoundRectPane,
+}
+
+struct RoundRectPane {
+    label: &'static str,
+    value: i32,
+    color: egui::Color32,
+}
+
+impl RoundRectPane {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(format!(
+            "{} (pane): left-click increments, right-click decrements",
+            self.label
+        ));
+        ui.add_space(8.0);
+
+        let avail = ui.available_size();
+        let desired = egui::vec2(avail.x.max(10.0), avail.y.max(10.0));
+        let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
+
+        if response.clicked_by(egui::PointerButton::Primary) {
+            self.value += 1;
+        }
+        if response.clicked_by(egui::PointerButton::Secondary) {
+            self.value -= 1;
+        }
+
+        let painter = ui.painter_at(rect);
+        let bg = self.color.gamma_multiply(0.85);
+        let stroke = egui::Stroke::new(2.0, egui::Color32::from_black_alpha(160));
+
+        painter.rect_filled(rect, egui::CornerRadius::same(10), bg);
+        painter.rect_stroke(
+            rect,
+            egui::CornerRadius::same(10),
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            format!("{}", self.value),
+            egui::FontId::proportional(48.0),
+            egui::Color32::WHITE,
+        );
+    }
+}
+
+impl DockBehavior {
+    fn rect_pane_mut(&mut self, pane: Pane) -> Option<&mut RoundRectPane> {
+        match pane {
+            Pane::D => Some(&mut self.d),
+            Pane::E => Some(&mut self.e),
+            Pane::F => Some(&mut self.f),
+            _ => None,
+        }
+    }
+}
 
 impl egui_tiles::Behavior<Pane> for DockBehavior {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
             Pane::Scene => "Scene".into(),
+            Pane::D => "D".into(),
+            Pane::E => "E".into(),
+            Pane::F => "F".into(),
             Pane::Debug => "Debug".into(),
         }
     }
@@ -43,6 +109,12 @@ impl egui_tiles::Behavior<Pane> for DockBehavior {
                 ui.add_space(4.0);
                 egui_tiles::UiResponse::None
             }
+            Pane::D | Pane::E | Pane::F => {
+                if let Some(r) = self.rect_pane_mut(*pane) {
+                    r.ui(ui);
+                }
+                egui_tiles::UiResponse::None
+            }
             Pane::Debug => {
                 ui.label("Debug pane");
                 egui_tiles::UiResponse::None
@@ -52,7 +124,7 @@ impl egui_tiles::Behavior<Pane> for DockBehavior {
 }
 
 #[derive(Clone)]
-struct Tile {
+struct RoundRect {
     id: egui::Id,
     local_pos: egui::Pos2,
     size: egui::Vec2,
@@ -61,8 +133,8 @@ struct Tile {
 }
 
 #[derive(Resource)]
-struct TileScene {
-    tiles: Vec<Tile>,
+struct OverlayScene {
+    rects: Vec<RoundRect>,
 }
 
 fn main() {
@@ -76,7 +148,7 @@ fn main() {
         }))
         .add_plugins(EguiPlugin::default())
         .insert_resource(make_dock_state())
-        .insert_resource(make_tile_scene())
+        .insert_resource(make_overlay_scene())
         .insert_resource(ClickMode::TopmostOnly)
         .add_systems(Startup, setup)
         .add_systems(Update, toggle_click_mode)
@@ -103,35 +175,54 @@ fn toggle_click_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<ClickMode
 fn make_dock_state() -> DockState {
     let mut tiles = egui_tiles::Tiles::default();
     let scene = tiles.insert_pane(Pane::Scene);
+    let d = tiles.insert_pane(Pane::D);
+    let e = tiles.insert_pane(Pane::E);
+    let f = tiles.insert_pane(Pane::F);
     let debug = tiles.insert_pane(Pane::Debug);
 
-    let root = tiles.insert_tab_tile(vec![scene, debug]);
+    let root = tiles.insert_tab_tile(vec![scene, d, e, f, debug]);
     let tree = egui_tiles::Tree::new("dock_tree", root, tiles);
 
     DockState {
         tree,
-        behavior: DockBehavior::default(),
+        behavior: DockBehavior {
+            d: RoundRectPane {
+                label: "D",
+                value: 0,
+                color: egui::Color32::from_rgb(0xff, 0xbe, 0x0b),
+            },
+            e: RoundRectPane {
+                label: "E",
+                value: 0,
+                color: egui::Color32::from_rgb(0x8e, 0xec, 0xf5),
+            },
+            f: RoundRectPane {
+                label: "F",
+                value: 0,
+                color: egui::Color32::from_rgb(0x9b, 0x5d, 0xff),
+            },
+        },
     }
 }
 
-fn make_tile_scene() -> TileScene {
-    TileScene {
-        tiles: vec![
-            Tile {
+fn make_overlay_scene() -> OverlayScene {
+    OverlayScene {
+        rects: vec![
+            RoundRect {
                 id: egui::Id::new("tile_a"),
                 local_pos: egui::pos2(80.0, 60.0),
                 size: egui::vec2(220.0, 140.0),
                 value: 0,
                 color: egui::Color32::from_rgb(0x3a, 0x86, 0xff),
             },
-            Tile {
+            RoundRect {
                 id: egui::Id::new("tile_b"),
                 local_pos: egui::pos2(160.0, 120.0),
                 size: egui::vec2(220.0, 140.0),
                 value: 0,
                 color: egui::Color32::from_rgb(0xff, 0x00, 0x6e),
             },
-            Tile {
+            RoundRect {
                 id: egui::Id::new("tile_c"),
                 local_pos: egui::pos2(240.0, 180.0),
                 size: egui::vec2(220.0, 140.0),
@@ -145,11 +236,16 @@ fn make_tile_scene() -> TileScene {
 fn ui_system(
     mut contexts: EguiContexts,
     mut dock: ResMut<DockState>,
-    mut scene: ResMut<TileScene>,
+    mut overlay: ResMut<OverlayScene>,
     click_mode: Res<ClickMode>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
+    };
+
+    let (d_count, e_count, f_count) = {
+        let b = &dock.behavior;
+        (b.d.value, b.e.value, b.f.value)
     };
 
     egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
@@ -164,12 +260,14 @@ fn ui_system(
             ui.separator();
             ui.monospace(format!(
                 "A:{}  B:{}  C:{}",
-                scene.tiles.get(0).map(|t| t.value).unwrap_or_default(),
-                scene.tiles.get(1).map(|t| t.value).unwrap_or_default(),
-                scene.tiles.get(2).map(|t| t.value).unwrap_or_default(),
+                overlay.rects.get(0).map(|t| t.value).unwrap_or_default(),
+                overlay.rects.get(1).map(|t| t.value).unwrap_or_default(),
+                overlay.rects.get(2).map(|t| t.value).unwrap_or_default(),
             ));
+            ui.separator();
+            ui.monospace(format!("D:{}  E:{}  F:{}", d_count, e_count, f_count));
             if ui.button("reset").clicked() {
-                for t in &mut scene.tiles {
+                for t in &mut overlay.rects {
                     t.value = 0;
                 }
             }
@@ -187,14 +285,14 @@ fn ui_system(
     // Draw the overlapping tiles over the "Scene" pane area.
     // Note: This is intentionally NOT using egui's normal widget click handling.
     // We'll do naïve global hit-testing below (so overlaps will trigger multiple updates).
-    draw_tiles_overlay(ctx, tiles_origin, *click_mode, &mut scene);
+    draw_overlay_rects(ctx, tiles_origin, *click_mode, &mut overlay);
 }
 
-fn draw_tiles_overlay(
+fn draw_overlay_rects(
     ctx: &egui::Context,
     origin: egui::Pos2,
     click_mode: ClickMode,
-    scene: &mut TileScene,
+    scene: &mut OverlayScene,
 ) {
     // Find the click positions (if any) this frame.
     // This is intentionally "global" and does not respect widget consumption.
@@ -213,7 +311,7 @@ fn draw_tiles_overlay(
     });
 
     // Paint (and compute) tile rectangles in screen coordinates.
-    for tile in &scene.tiles {
+    for tile in &scene.rects {
         let min = origin + tile.local_pos.to_vec2();
         let rect = egui::Rect::from_min_size(min, tile.size);
 
@@ -252,7 +350,7 @@ fn draw_tiles_overlay(
     if let Some(pos) = left_click_pos {
         match click_mode {
             ClickMode::OverlapAll => {
-                for tile in &mut scene.tiles {
+                for tile in &mut scene.rects {
                     let min = origin + tile.local_pos.to_vec2();
                     let rect = egui::Rect::from_min_size(min, tile.size);
                     if rect.contains(pos) {
@@ -261,11 +359,11 @@ fn draw_tiles_overlay(
                 }
             }
             ClickMode::TopmostOnly => {
-                for i in (0..scene.tiles.len()).rev() {
-                    let min = origin + scene.tiles[i].local_pos.to_vec2();
-                    let rect = egui::Rect::from_min_size(min, scene.tiles[i].size);
+                for i in (0..scene.rects.len()).rev() {
+                    let min = origin + scene.rects[i].local_pos.to_vec2();
+                    let rect = egui::Rect::from_min_size(min, scene.rects[i].size);
                     if rect.contains(pos) {
-                        scene.tiles[i].value += 1;
+                        scene.rects[i].value += 1;
                         break;
                     }
                 }
@@ -275,7 +373,7 @@ fn draw_tiles_overlay(
     if let Some(pos) = right_click_pos {
         match click_mode {
             ClickMode::OverlapAll => {
-                for tile in &mut scene.tiles {
+                for tile in &mut scene.rects {
                     let min = origin + tile.local_pos.to_vec2();
                     let rect = egui::Rect::from_min_size(min, tile.size);
                     if rect.contains(pos) {
@@ -284,11 +382,11 @@ fn draw_tiles_overlay(
                 }
             }
             ClickMode::TopmostOnly => {
-                for i in (0..scene.tiles.len()).rev() {
-                    let min = origin + scene.tiles[i].local_pos.to_vec2();
-                    let rect = egui::Rect::from_min_size(min, scene.tiles[i].size);
+                for i in (0..scene.rects.len()).rev() {
+                    let min = origin + scene.rects[i].local_pos.to_vec2();
+                    let rect = egui::Rect::from_min_size(min, scene.rects[i].size);
                     if rect.contains(pos) {
-                        scene.tiles[i].value -= 1;
+                        scene.rects[i].value -= 1;
                         break;
                     }
                 }
