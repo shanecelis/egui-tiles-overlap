@@ -36,10 +36,13 @@ struct RoundRectPane {
 
 impl RoundRectPane {
     fn ui(&mut self, ui: &mut egui::Ui) {
-        ui.label(format!(
-            "{} (pane): left-click increments, right-click decrements",
-            self.label
-        ));
+        ui.add(
+            egui::Label::new(format!(
+                "{} (pane): left-click increments, right-click decrements",
+                self.label
+            ))
+            .selectable(false),
+        );
         ui.add_space(8.0);
 
         let avail = ui.available_size();
