@@ -134,7 +134,7 @@ fn ui_system(
 
     egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Click on overlapping tiles (naïve click handling: multiple tiles will change).");
+            ui.label("Click on overlapping tiles (topmost tile should change).");
             ui.separator();
             ui.monospace(format!(
                 "A:{}  B:{}  C:{}",
@@ -215,22 +215,25 @@ fn draw_tiles_overlay(ctx: &egui::Context, origin: egui::Pos2, scene: &mut TileS
             });
     }
 
-    // Naïve propagation: apply the click to *every* tile whose rect contains the pointer.
+    // Topmost-only handling: scan tiles from top to bottom (reverse draw order),
+    // and apply the click to the first tile whose rect contains the pointer.
     if let Some(pos) = left_click_pos {
-        for tile in &mut scene.tiles {
-            let min = origin + tile.local_pos.to_vec2();
-            let rect = egui::Rect::from_min_size(min, tile.size);
+        for i in (0..scene.tiles.len()).rev() {
+            let min = origin + scene.tiles[i].local_pos.to_vec2();
+            let rect = egui::Rect::from_min_size(min, scene.tiles[i].size);
             if rect.contains(pos) {
-                tile.value += 1;
+                scene.tiles[i].value += 1;
+                break;
             }
         }
     }
     if let Some(pos) = right_click_pos {
-        for tile in &mut scene.tiles {
-            let min = origin + tile.local_pos.to_vec2();
-            let rect = egui::Rect::from_min_size(min, tile.size);
+        for i in (0..scene.tiles.len()).rev() {
+            let min = origin + scene.tiles[i].local_pos.to_vec2();
+            let rect = egui::Rect::from_min_size(min, scene.tiles[i].size);
             if rect.contains(pos) {
-                tile.value -= 1;
+                scene.tiles[i].value -= 1;
+                break;
             }
         }
     }
