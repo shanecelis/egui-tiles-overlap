@@ -1,0 +1,9 @@
+[package]
+name = "egui-tiles-overlap"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.18.1"
+bevy_egui = "0.39.1"
+egui_tiles = "0.14.1"
