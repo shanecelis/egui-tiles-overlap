@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pane {
@@ -38,7 +38,7 @@ impl RoundRectPane {
     fn ui(&mut self, ui: &mut egui::Ui) {
         ui.add(
             egui::Label::new(format!(
-                "{} (pane): left-click increments, right-click decrements",
+                "{} (pane): left-click/scroll up increments, right-click/scroll down decrements",
                 self.label
             ))
             .selectable(false),
@@ -54,6 +54,14 @@ impl RoundRectPane {
         }
         if response.clicked_by(egui::PointerButton::Secondary) {
             self.value -= 1;
+        }
+        if response.hovered() {
+            let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll_delta_y > 0.0 {
+                self.value += 1;
+            } else if scroll_delta_y < 0.0 {
+                self.value -= 1;
+            }
         }
 
         let painter = ui.painter_at(rect);
@@ -107,7 +115,9 @@ impl egui_tiles::Behavior<Pane> for DockBehavior {
     ) -> egui_tiles::UiResponse {
         match pane {
             Pane::Scene => {
-                ui.label("Overlapping tiles test. Left-click increments, right-click decrements.");
+                ui.label(
+                    "Overlapping tiles test. Left-click/scroll up increments, right-click/scroll down decrements.",
+                );
                 ui.separator();
                 ui.add_space(4.0);
                 egui_tiles::UiResponse::None
@@ -253,7 +263,7 @@ fn ui_system(
 
     egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Click on overlapping tiles.");
+            ui.label("Click or scroll on overlapping tiles.");
             ui.separator();
             let mode_text = match *click_mode {
                 ClickMode::OverlapAll => "mode: overlap-all (SPACE toggles)",
@@ -297,9 +307,9 @@ fn draw_overlay_rects(
     click_mode: ClickMode,
     scene: &mut OverlayScene,
 ) {
-    // Find the click positions (if any) this frame.
+    // Find the pointer events (if any) this frame.
     // This is intentionally "global" and does not respect widget consumption.
-    let (left_click_pos, right_click_pos) = ctx.input(|i| {
+    let (left_click_pos, right_click_pos, scroll_event) = ctx.input(|i| {
         let left = i
             .pointer
             .button_clicked(egui::PointerButton::Primary)
@@ -310,7 +320,22 @@ fn draw_overlay_rects(
             .button_clicked(egui::PointerButton::Secondary)
             .then(|| i.pointer.interact_pos())
             .flatten();
-        (left, right)
+
+        let scroll_step = if i.raw_scroll_delta.y > 0.0 {
+            Some(1)
+        } else if i.raw_scroll_delta.y < 0.0 {
+            Some(-1)
+        } else {
+            None
+        };
+        let scroll = scroll_step.and_then(|delta| {
+            i.pointer
+                .hover_pos()
+                .or_else(|| i.pointer.interact_pos())
+                .map(|pos| (pos, delta))
+        });
+
+        (left, right, scroll)
     });
 
     // Paint (and compute) tile rectangles in screen coordinates.
@@ -347,7 +372,7 @@ fn draw_overlay_rects(
             });
     }
 
-    // Click handling:
+    // Click/scroll handling:
     // - Overlap-all: apply to every tile under the pointer.
     // - Topmost-only: scan tiles from top to bottom (reverse draw order) and stop on first hit.
     if let Some(pos) = left_click_pos {
@@ -390,6 +415,29 @@ fn draw_overlay_rects(
                     let rect = egui::Rect::from_min_size(min, scene.rects[i].size);
                     if rect.contains(pos) {
                         scene.rects[i].value -= 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if let Some((pos, delta)) = scroll_event {
+        match click_mode {
+            ClickMode::OverlapAll => {
+                for tile in &mut scene.rects {
+                    let min = origin + tile.local_pos.to_vec2();
+                    let rect = egui::Rect::from_min_size(min, tile.size);
+                    if rect.contains(pos) {
+                        tile.value += delta;
+                    }
+                }
+            }
+            ClickMode::TopmostOnly => {
+                for i in (0..scene.rects.len()).rev() {
+                    let min = origin + scene.rects[i].local_pos.to_vec2();
+                    let rect = egui::Rect::from_min_size(min, scene.rects[i].size);
+                    if rect.contains(pos) {
+                        scene.rects[i].value += delta;
                         break;
                     }
                 }
