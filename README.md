@@ -41,18 +41,19 @@ You can drag the **D/E/F tabs** around, reorder them, and split them like normal
 
 ## Controls / behavior
 
-### Mouse
+### Mouse / trackpad
 
 - **Left-click** on a tile: **increment**
 - **Right-click** on a tile: **decrement**
+- **Scroll up/down** over a tile: **increment/decrement**
 
 For the overlay tiles A/B/C, behavior depends on click mode (see below).
 
 ### Keyboard
 
 - **Space**: toggle click mode for the **overlay tiles A/B/C**
-  - `topmost-only`: only the topmost tile under the cursor changes (e.g. clicking the triple-overlap changes **C** only)
-  - `overlap-all`: every tile under the cursor changes (clicking the triple-overlap changes **A**, **B**, and **C**)
+  - `topmost-only`: only the topmost tile under the cursor changes (e.g. clicking or scrolling the triple-overlap changes **C** only)
+  - `overlap-all`: every tile under the cursor changes (clicking or scrolling the triple-overlap changes **A**, **B**, and **C**)
 
 ### UI
 
@@ -69,5 +70,4 @@ For the overlay tiles A/B/C, behavior depends on click mode (see below).
 ## Notes
 
 - The overlay click-mode toggle affects **A/B/C only**.
-- D/E/F panes each handle clicks locally via normal egui widget responses (left/right click changes that pane’s counter).
-
+- D/E/F panes each handle input locally via normal egui widget responses (left-click/scroll up increments, right-click/scroll down decrements).
