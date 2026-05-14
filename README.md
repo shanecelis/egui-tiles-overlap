@@ -1,15 +1,21 @@
-# egui-tiles-overlap
+# PreUpdate Owner Lag Repro
 
-Small Bevy + egui test app for **overlapping “tiles”** and **click handling**.
+Small Bevy + egui repro for:
 
-The core question this app helps answer is:
+- `#627` / `#637`: UI events pass through to panels behind or not visible.
+- Elodin-specific cause: scene/camera input runs in `PreUpdate`, while the UI owner is resolved later by egui.
 
-- When multiple UI elements overlap, how do you ensure **only the topmost element** processes a click (and elements “underneath” do not)?
+## What This Shows
 
-This repo intentionally contains both:
+The scene contains three overlapping rectangles:
 
-- a **naïve overlap click mode** (demonstrates the “bug”: all overlapping tiles react)
-- a **topmost-only click mode** (demonstrates the “fix”: only the front-most tile reacts)
+- `A` is behind `B`
+- `B` is behind `C`
+- `C` is the topmost scene rectangle
+
+A real UI pane named `D` is drawn on top of `C`.
+
+When the pointer is over `D`, scene input should be blocked. If `C` changes while the pointer is over `D`, the event has passed through the UI pane to the scene behind it.
 
 ## Run
 
@@ -17,57 +23,68 @@ This repo intentionally contains both:
 cargo run
 ```
 
-## What you’ll see
+## Controls
 
-### Overlay tiles A/B/C (overlapping)
+- Left click or scroll up: increment the target.
+- Right click or scroll down: decrement the target.
+- Hold left mouse on `C`, then drag into `D`: deterministic bug repro.
+- `L` or `Space`: toggle repro mode.
+- `R`: reset counters.
 
-In the main window, there are three **overlapping rounded rectangles** drawn as an overlay:
+## Modes
 
-- **A** (bottom)
-- **B** (middle)
-- **C** (top)
+### BUG: stale owner in PreUpdate
 
-Each displays a number.
+The scene input system runs in `PreUpdate`.
 
-### Dockable panes D/E/F (movable panes)
+It gates input with the owner resolved during the previous egui pass. This can be one frame stale.
 
-The UI also contains a dock layout (`egui_tiles`) with panes:
+Expected visible bug:
 
-- **Scene** (contains the overlay drawing area)
-- **D**, **E**, **F** (each is a movable/dockable pane with its own counter and a big rounded rectangle)
-- **Debug**
+```text
+pointer over: D
+PreUpdate used: scene
+BUG: C changed while pointer was over D
+```
 
-You can drag the **D/E/F tabs** around, reorder them, and split them like normal `egui_tiles` panes.
+### FIX: current pointer hit-test
 
-## Controls / behavior
+The scene input system still runs in `PreUpdate`, but it checks the current pointer position against the latest known UI regions.
 
-### Mouse / trackpad
+Expected behavior:
 
-- **Left-click** on a tile: **increment**
-- **Right-click** on a tile: **decrement**
-- **Scroll up/down** over a tile: **increment/decrement**
+```text
+pointer over: D
+PreUpdate used: D
+OK: D blocked the scene input
+```
 
-For the overlay tiles A/B/C, behavior depends on click mode (see below).
+## Precise Test
 
-### Keyboard
+1. Start in `BUG: stale owner in PreUpdate`.
+2. Press and hold left mouse on the visible left side of `C`.
+3. `C` may increment once here. That is normal because the press started on the scene.
+4. While still holding, drag into pane `D`.
+5. Watch the counters and banner.
 
-- **Space**: toggle click mode for the **overlay tiles A/B/C**
-  - `topmost-only`: only the topmost tile under the cursor changes (e.g. clicking or scrolling the triple-overlap changes **C** only)
-  - `overlap-all`: every tile under the cursor changes (clicking or scrolling the triple-overlap changes **A**, **B**, and **C**)
+If the bug is reproduced, `C` increments again even though the pointer is over `D`.
 
-### UI
+Then:
 
-- **reset** button: resets overlay tile counts (A/B/C) back to 0
-- The **top bar** shows the current counts for **A/B/C** and **D/E/F**, plus the current click mode.
+1. Press `L` or `Space` to switch to `FIX: current pointer hit-test`.
+2. Repeat the same hold-and-drag movement.
+3. `D` should block the scene input, and `C` should not increment when the pointer enters `D`.
 
-## Why the app is structured this way
+## How The Evidence Works
 
-- **Overlay A/B/C** are drawn as separate floating `egui::Area`s and use manual hit-testing.
-  - This makes it easy to demonstrate the difference between “overlap-all” and “topmost-only” by changing only the hit-test logic.
-- **D/E/F** are *real* `egui_tiles` panes.
-  - They exist to demonstrate that you can have independent, movable panes that also handle clicks and update state.
+The important contradiction is:
 
-## Notes
+```text
+pointer over: D
+PreUpdate used: scene
+C changed
+```
 
-- The overlay click-mode toggle affects **A/B/C only**.
-- D/E/F panes each handle input locally via normal egui widget responses (left-click/scroll up increments, right-click/scroll down decrements).
+That means the UI owner for the current pointer is `D`, but the scene/camera input path accepted the event as if the pointer were still over the scene.
+
+This isolates the scheduling issue: the scene/camera input runs before egui has published the current frame's owner, so it can make one decision using stale owner data.

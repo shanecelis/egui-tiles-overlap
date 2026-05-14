@@ -1,171 +1,166 @@
-use bevy::prelude::*;
+use bevy::{input::mouse::MouseWheel, prelude::*, window::PrimaryWindow};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Pane {
+enum ReproMode {
+    StaleOwnerPreUpdate,
+    CurrentPointerHitTest,
+}
+
+impl ReproMode {
+    fn label(self) -> &'static str {
+        match self {
+            ReproMode::StaleOwnerPreUpdate => "BUG: stale owner in PreUpdate",
+            ReproMode::CurrentPointerHitTest => "FIX: current pointer hit-test",
+        }
+    }
+
+    fn toggle(self) -> Self {
+        match self {
+            ReproMode::StaleOwnerPreUpdate => ReproMode::CurrentPointerHitTest,
+            ReproMode::CurrentPointerHitTest => ReproMode::StaleOwnerPreUpdate,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum InputOwner {
+    #[default]
+    None,
     Scene,
-    D,
-    E,
-    F,
-    Debug,
+    DPane,
 }
 
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-enum ClickMode {
-    OverlapAll,
-    TopmostOnly,
+impl InputOwner {
+    fn label(self) -> &'static str {
+        match self {
+            InputOwner::None => "none",
+            InputOwner::Scene => "scene",
+            InputOwner::DPane => "D",
+        }
+    }
+
+    fn color(self) -> egui::Color32 {
+        match self {
+            InputOwner::None => egui::Color32::GRAY,
+            InputOwner::Scene => egui::Color32::from_rgb(65, 160, 105),
+            InputOwner::DPane => egui::Color32::from_rgb(235, 130, 65),
+        }
+    }
 }
 
-#[derive(Resource)]
-struct DockState {
-    tree: egui_tiles::Tree<Pane>,
-    behavior: DockBehavior,
+#[derive(Clone, Copy, Debug)]
+struct OwnerRegion {
+    rect: egui::Rect,
+    owner: InputOwner,
+    priority: u8,
 }
 
-struct DockBehavior {
-    d: RoundRectPane,
-    e: RoundRectPane,
-    f: RoundRectPane,
-}
-
-struct RoundRectPane {
+#[derive(Clone, Debug)]
+struct SceneTile {
     label: &'static str,
-    value: i32,
-    color: egui::Color32,
-}
-
-impl RoundRectPane {
-    fn ui(&mut self, ui: &mut egui::Ui) {
-        ui.add(
-            egui::Label::new(format!(
-                "{} (pane): left-click/scroll up increments, right-click/scroll down decrements",
-                self.label
-            ))
-            .selectable(false),
-        );
-        ui.add_space(8.0);
-
-        let avail = ui.available_size();
-        let desired = egui::vec2(avail.x.max(10.0), avail.y.max(10.0));
-        let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
-
-        if response.clicked_by(egui::PointerButton::Primary) {
-            self.value += 1;
-        }
-        if response.clicked_by(egui::PointerButton::Secondary) {
-            self.value -= 1;
-        }
-        if response.hovered() {
-            let scroll_delta_y = ui.input(|i| i.raw_scroll_delta.y);
-            if scroll_delta_y > 0.0 {
-                self.value += 1;
-            } else if scroll_delta_y < 0.0 {
-                self.value -= 1;
-            }
-        }
-
-        let painter = ui.painter_at(rect);
-        let bg = self.color.gamma_multiply(0.85);
-        let stroke = egui::Stroke::new(2.0, egui::Color32::from_black_alpha(160));
-
-        painter.rect_filled(rect, egui::CornerRadius::same(10), bg);
-        painter.rect_stroke(
-            rect,
-            egui::CornerRadius::same(10),
-            stroke,
-            egui::StrokeKind::Inside,
-        );
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            format!("{}", self.value),
-            egui::FontId::proportional(48.0),
-            egui::Color32::WHITE,
-        );
-    }
-}
-
-impl DockBehavior {
-    fn rect_pane_mut(&mut self, pane: Pane) -> Option<&mut RoundRectPane> {
-        match pane {
-            Pane::D => Some(&mut self.d),
-            Pane::E => Some(&mut self.e),
-            Pane::F => Some(&mut self.f),
-            _ => None,
-        }
-    }
-}
-
-impl egui_tiles::Behavior<Pane> for DockBehavior {
-    fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        match pane {
-            Pane::Scene => "Scene".into(),
-            Pane::D => "D".into(),
-            Pane::E => "E".into(),
-            Pane::F => "F".into(),
-            Pane::Debug => "Debug".into(),
-        }
-    }
-
-    fn pane_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        _tile_id: egui_tiles::TileId,
-        pane: &mut Pane,
-    ) -> egui_tiles::UiResponse {
-        match pane {
-            Pane::Scene => {
-                ui.label(
-                    "Overlapping tiles test. Left-click/scroll up increments, right-click/scroll down decrements.",
-                );
-                ui.separator();
-                ui.add_space(4.0);
-                egui_tiles::UiResponse::None
-            }
-            Pane::D | Pane::E | Pane::F => {
-                if let Some(r) = self.rect_pane_mut(*pane) {
-                    r.ui(ui);
-                }
-                egui_tiles::UiResponse::None
-            }
-            Pane::Debug => {
-                ui.label("Debug pane");
-                egui_tiles::UiResponse::None
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-struct RoundRect {
-    id: egui::Id,
     local_pos: egui::Pos2,
     size: egui::Vec2,
     value: i32,
     color: egui::Color32,
 }
 
-#[derive(Resource)]
-struct OverlayScene {
-    rects: Vec<RoundRect>,
+#[derive(Resource, Debug)]
+struct SceneTiles {
+    items: Vec<SceneTile>,
+}
+
+impl Default for SceneTiles {
+    fn default() -> Self {
+        Self {
+            items: vec![
+                SceneTile {
+                    label: "A",
+                    local_pos: egui::pos2(80.0, 70.0),
+                    size: egui::vec2(270.0, 170.0),
+                    value: 0,
+                    color: egui::Color32::from_rgb(0x3a, 0x86, 0xff),
+                },
+                SceneTile {
+                    label: "B",
+                    local_pos: egui::pos2(185.0, 145.0),
+                    size: egui::vec2(270.0, 170.0),
+                    value: 0,
+                    color: egui::Color32::from_rgb(0xff, 0x00, 0x6e),
+                },
+                SceneTile {
+                    label: "C",
+                    local_pos: egui::pos2(290.0, 220.0),
+                    size: egui::vec2(270.0, 170.0),
+                    value: 0,
+                    color: egui::Color32::from_rgb(0x83, 0xc5, 0xbe),
+                },
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScreenTile {
+    rect: egui::Rect,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Banner {
+    Bug(&'static str),
+    Blocked,
+    DHandled,
+}
+
+#[derive(Resource, Debug)]
+struct ReproState {
+    mode: ReproMode,
+    owner_regions_from_last_egui_pass: Vec<OwnerRegion>,
+    tile_rects_from_last_egui_pass: Vec<ScreenTile>,
+    owner_from_last_egui_pass: InputOwner,
+    pointer_owner_now: InputOwner,
+    pointer_owner_seen_by_preupdate: InputOwner,
+    owner_used_by_preupdate: InputOwner,
+    d_value: i32,
+    frame: u64,
+    banner: Option<Banner>,
+    last_event: String,
+}
+
+impl Default for ReproState {
+    fn default() -> Self {
+        Self {
+            mode: ReproMode::StaleOwnerPreUpdate,
+            owner_regions_from_last_egui_pass: Vec::new(),
+            tile_rects_from_last_egui_pass: Vec::new(),
+            owner_from_last_egui_pass: InputOwner::None,
+            pointer_owner_now: InputOwner::None,
+            pointer_owner_seen_by_preupdate: InputOwner::None,
+            owner_used_by_preupdate: InputOwner::None,
+            d_value: 0,
+            frame: 0,
+            banner: None,
+            last_event: "Hold left mouse on C, then drag into D.".to_string(),
+        }
+    }
 }
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "egui tiles overlap test".to_string(),
+                title: "PreUpdate owner lag repro".to_string(),
+                resolution: (1180, 760).into(),
                 ..default()
             }),
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
-        .insert_resource(make_dock_state())
-        .insert_resource(make_overlay_scene())
-        .insert_resource(ClickMode::TopmostOnly)
+        .insert_resource(SceneTiles::default())
+        .insert_resource(ReproState::default())
         .add_systems(Startup, setup)
-        .add_systems(Update, toggle_click_mode)
-        // IMPORTANT: run egui code inside the egui pass schedule.
+        .add_systems(PreUpdate, scene_input_in_preupdate)
+        .add_systems(Update, keyboard_shortcuts)
         .add_systems(EguiPrimaryContextPass, ui_system)
         .run();
 }
@@ -174,274 +169,377 @@ fn setup(mut commands: Commands) {
     commands.spawn(Camera2d);
 }
 
-fn toggle_click_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<ClickMode>) {
-    if !keys.just_pressed(KeyCode::Space) {
+fn keyboard_shortcuts(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut tiles: ResMut<SceneTiles>,
+    mut repro: ResMut<ReproState>,
+) {
+    if keys.just_pressed(KeyCode::KeyL) || keys.just_pressed(KeyCode::Space) {
+        repro.mode = repro.mode.toggle();
+        repro.banner = None;
+        repro.last_event = format!("Mode: {}", repro.mode.label());
+    }
+
+    if keys.just_pressed(KeyCode::KeyR) {
+        reset_counts(&mut tiles, &mut repro);
+    }
+}
+
+fn scene_input_in_preupdate(
+    mut tiles: ResMut<SceneTiles>,
+    mut repro: ResMut<ReproState>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut mouse_wheel: MessageReader<MouseWheel>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+) {
+    repro.frame += 1;
+
+    let pointer = windows
+        .single()
+        .ok()
+        .and_then(Window::cursor_position)
+        .map(|pos| egui::pos2(pos.x, pos.y));
+
+    let scroll_delta = mouse_wheel.read().map(|event| event.y).sum::<f32>();
+    let click_delta = if mouse_buttons.just_pressed(MouseButton::Left) {
+        1
+    } else if mouse_buttons.just_pressed(MouseButton::Right) {
+        -1
+    } else {
+        0
+    };
+    let input_delta = if scroll_delta > 0.0 {
+        1
+    } else if scroll_delta < 0.0 {
+        -1
+    } else {
+        click_delta
+    };
+
+    let pointer_owner_hit_test = pointer
+        .map(|pos| owner_at(&repro.owner_regions_from_last_egui_pass, pos))
+        .unwrap_or_default();
+    let entered_d_while_holding = mouse_buttons.pressed(MouseButton::Left)
+        && repro.pointer_owner_seen_by_preupdate == InputOwner::Scene
+        && pointer_owner_hit_test == InputOwner::DPane;
+
+    let owner_used = match repro.mode {
+        ReproMode::StaleOwnerPreUpdate => repro.owner_from_last_egui_pass,
+        ReproMode::CurrentPointerHitTest => pointer_owner_hit_test,
+    };
+
+    repro.pointer_owner_now = pointer_owner_hit_test;
+    repro.pointer_owner_seen_by_preupdate = pointer_owner_hit_test;
+    repro.owner_used_by_preupdate = owner_used;
+
+    let input_delta = if input_delta != 0 {
+        input_delta
+    } else if entered_d_while_holding {
+        1
+    } else {
+        0
+    };
+
+    if input_delta == 0 {
         return;
     }
 
-    *mode = match *mode {
-        ClickMode::OverlapAll => ClickMode::TopmostOnly,
-        ClickMode::TopmostOnly => ClickMode::OverlapAll,
-    };
-}
-
-fn make_dock_state() -> DockState {
-    let mut tiles = egui_tiles::Tiles::default();
-    let scene = tiles.insert_pane(Pane::Scene);
-    let d = tiles.insert_pane(Pane::D);
-    let e = tiles.insert_pane(Pane::E);
-    let f = tiles.insert_pane(Pane::F);
-    let debug = tiles.insert_pane(Pane::Debug);
-
-    let root = tiles.insert_tab_tile(vec![scene, d, e, f, debug]);
-    let tree = egui_tiles::Tree::new("dock_tree", root, tiles);
-
-    DockState {
-        tree,
-        behavior: DockBehavior {
-            d: RoundRectPane {
-                label: "D",
-                value: 0,
-                color: egui::Color32::from_rgb(0xff, 0xbe, 0x0b),
-            },
-            e: RoundRectPane {
-                label: "E",
-                value: 0,
-                color: egui::Color32::from_rgb(0x8e, 0xec, 0xf5),
-            },
-            f: RoundRectPane {
-                label: "F",
-                value: 0,
-                color: egui::Color32::from_rgb(0x9b, 0x5d, 0xff),
-            },
-        },
+    if owner_used != InputOwner::Scene {
+        repro.banner = Some(Banner::Blocked);
+        repro.last_event = format!(
+            "Frame {}: D blocked the scene input. PreUpdate used owner = {}.",
+            repro.frame,
+            owner_used.label()
+        );
+        return;
     }
-}
 
-fn make_overlay_scene() -> OverlayScene {
-    OverlayScene {
-        rects: vec![
-            RoundRect {
-                id: egui::Id::new("tile_a"),
-                local_pos: egui::pos2(80.0, 60.0),
-                size: egui::vec2(220.0, 140.0),
-                value: 0,
-                color: egui::Color32::from_rgb(0x3a, 0x86, 0xff),
-            },
-            RoundRect {
-                id: egui::Id::new("tile_b"),
-                local_pos: egui::pos2(160.0, 120.0),
-                size: egui::vec2(220.0, 140.0),
-                value: 0,
-                color: egui::Color32::from_rgb(0xff, 0x00, 0x6e),
-            },
-            RoundRect {
-                id: egui::Id::new("tile_c"),
-                local_pos: egui::pos2(240.0, 180.0),
-                size: egui::vec2(220.0, 140.0),
-                value: 0,
-                color: egui::Color32::from_rgb(0x83, 0xc5, 0xbe),
-            },
-        ],
+    let Some(pos) = pointer else {
+        return;
+    };
+    let Some(tile_index) = topmost_tile_at(&repro.tile_rects_from_last_egui_pass, pos) else {
+        return;
+    };
+
+    tiles.items[tile_index].value += input_delta;
+    let tile_label = tiles.items[tile_index].label;
+
+    if pointer_owner_hit_test == InputOwner::DPane {
+        repro.banner = Some(Banner::Bug(tile_label));
+        repro.last_event = format!(
+            "Frame {}: {} changed even though the pointer hit D.",
+            repro.frame, tile_label
+        );
+    } else {
+        repro.banner = None;
+        repro.last_event = format!(
+            "Frame {}: {} changed from scene input.",
+            repro.frame, tile_label
+        );
     }
 }
 
 fn ui_system(
     mut contexts: EguiContexts,
-    mut dock: ResMut<DockState>,
-    mut overlay: ResMut<OverlayScene>,
-    click_mode: Res<ClickMode>,
+    mut tiles: ResMut<SceneTiles>,
+    mut repro: ResMut<ReproState>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
 
-    let (d_count, e_count, f_count) = {
-        let b = &dock.behavior;
-        (b.d.value, b.e.value, b.f.value)
-    };
+    top_bar(ctx, &mut tiles, &mut repro);
 
-    egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            ui.label("Click or scroll on overlapping tiles.");
-            ui.separator();
-            let mode_text = match *click_mode {
-                ClickMode::OverlapAll => "mode: overlap-all (SPACE toggles)",
-                ClickMode::TopmostOnly => "mode: topmost-only (SPACE toggles)",
-            };
-            ui.monospace(mode_text);
-            ui.separator();
-            ui.monospace(format!(
-                "A:{}  B:{}  C:{}",
-                overlay.rects.get(0).map(|t| t.value).unwrap_or_default(),
-                overlay.rects.get(1).map(|t| t.value).unwrap_or_default(),
-                overlay.rects.get(2).map(|t| t.value).unwrap_or_default(),
-            ));
-            ui.separator();
-            ui.monospace(format!("D:{}  E:{}  F:{}", d_count, e_count, f_count));
-            if ui.button("reset").clicked() {
-                for t in &mut overlay.rects {
-                    t.value = 0;
-                }
-            }
-        });
-    });
+    let mut owner_regions = Vec::new();
+    let mut tile_rects = Vec::new();
+    let mut d_rect = egui::Rect::NOTHING;
 
-    let mut tiles_origin = egui::Pos2::ZERO;
     egui::CentralPanel::default().show(ctx, |ui| {
-        // IMPORTANT: only query layout/available rect *inside* the egui run.
-        tiles_origin = ui.available_rect_before_wrap().min;
-        let DockState { tree, behavior } = &mut *dock;
-        tree.ui(behavior, ui);
+        let available = ui.available_rect_before_wrap();
+        let scene_rect = egui::Rect::from_min_max(
+            available.min + egui::vec2(44.0, 34.0),
+            available.max - egui::vec2(44.0, 42.0),
+        );
+        let tile_origin = scene_rect.min + egui::vec2(26.0, 52.0);
+
+        tile_rects = tiles
+            .items
+            .iter()
+            .map(|tile| ScreenTile {
+                rect: egui::Rect::from_min_size(tile_origin + tile.local_pos.to_vec2(), tile.size),
+            })
+            .collect();
+
+        let c_rect = tile_rects[2].rect;
+        d_rect = egui::Rect::from_min_size(
+            c_rect.min + egui::vec2(126.0, 48.0),
+            egui::vec2(132.0, 82.0),
+        );
+
+        owner_regions = vec![
+            OwnerRegion {
+                rect: scene_rect,
+                owner: InputOwner::Scene,
+                priority: 0,
+            },
+            OwnerRegion {
+                rect: d_rect,
+                owner: InputOwner::DPane,
+                priority: 10,
+            },
+        ];
+
+        let pointer = ctx.input(|input| input.pointer.latest_pos());
+        let owner_now = pointer
+            .map(|pos| owner_at(&owner_regions, pos))
+            .unwrap_or_default();
+        repro.pointer_owner_now = owner_now;
+
+        paint_scene(ui, scene_rect, &tile_rects, &tiles, &repro);
     });
 
-    // Draw the overlapping tiles over the "Scene" pane area.
-    // Note: This is intentionally NOT using egui's normal widget click handling.
-    // We'll do naïve global hit-testing below (so overlaps will trigger multiple updates).
-    draw_overlay_rects(ctx, tiles_origin, *click_mode, &mut overlay);
+    d_pane(ctx, d_rect, &mut repro);
+
+    repro.owner_from_last_egui_pass = repro.pointer_owner_now;
+    repro.owner_regions_from_last_egui_pass = owner_regions;
+    repro.tile_rects_from_last_egui_pass = tile_rects;
 }
 
-fn draw_overlay_rects(
-    ctx: &egui::Context,
-    origin: egui::Pos2,
-    click_mode: ClickMode,
-    scene: &mut OverlayScene,
-) {
-    // Find the pointer events (if any) this frame.
-    // This is intentionally "global" and does not respect widget consumption.
-    let (left_click_pos, right_click_pos, scroll_event) = ctx.input(|i| {
-        let left = i
-            .pointer
-            .button_clicked(egui::PointerButton::Primary)
-            .then(|| i.pointer.interact_pos())
-            .flatten();
-        let right = i
-            .pointer
-            .button_clicked(egui::PointerButton::Secondary)
-            .then(|| i.pointer.interact_pos())
-            .flatten();
-
-        let scroll_step = if i.raw_scroll_delta.y > 0.0 {
-            Some(1)
-        } else if i.raw_scroll_delta.y < 0.0 {
-            Some(-1)
-        } else {
-            None
-        };
-        let scroll = scroll_step.and_then(|delta| {
-            i.pointer
-                .hover_pos()
-                .or_else(|| i.pointer.interact_pos())
-                .map(|pos| (pos, delta))
+fn top_bar(ctx: &egui::Context, tiles: &mut SceneTiles, repro: &mut ReproState) {
+    egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("toggle mode (L / Space)").clicked() {
+                repro.mode = repro.mode.toggle();
+                repro.banner = None;
+                repro.last_event = format!("Mode: {}", repro.mode.label());
+            }
+            if ui.button("reset (R)").clicked() {
+                reset_counts(tiles, repro);
+            }
+            ui.separator();
+            ui.strong(repro.mode.label());
+            ui.separator();
+            ui.monospace("A/B/C: scene behind, topmost-only");
         });
-
-        (left, right, scroll)
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            owner_chip(ui, "pointer over", repro.pointer_owner_now);
+            owner_chip(ui, "PreUpdate used", repro.owner_used_by_preupdate);
+            ui.separator();
+            ui.monospace(format!(
+                "A:{}  B:{}  C:{}  D:{}",
+                tiles.items[0].value, tiles.items[1].value, tiles.items[2].value, repro.d_value
+            ));
+        });
+        ui.add_space(6.0);
+        ui.monospace(&repro.last_event);
+        ui.add_space(8.0);
     });
+}
 
-    // Paint (and compute) tile rectangles in screen coordinates.
-    for tile in &scene.rects {
-        let min = origin + tile.local_pos.to_vec2();
-        let rect = egui::Rect::from_min_size(min, tile.size);
+fn owner_chip(ui: &mut egui::Ui, title: &str, owner: InputOwner) {
+    let color = owner.color();
+    egui::Frame::new()
+        .fill(color.gamma_multiply(0.14))
+        .stroke(egui::Stroke::new(1.0, color))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.monospace(format!("{title}: {}", owner.label()));
+        });
+}
 
-        egui::Area::new(tile.id)
-            .order(egui::Order::Foreground)
-            .fixed_pos(min)
-            .interactable(false)
-            .show(ctx, |ui| {
-                ui.set_min_size(tile.size);
+fn paint_scene(
+    ui: &mut egui::Ui,
+    scene_rect: egui::Rect,
+    tile_rects: &[ScreenTile],
+    tiles: &SceneTiles,
+    repro: &ReproState,
+) {
+    let painter = ui.painter();
 
-                let bg = tile.color.gamma_multiply(0.85);
-                let stroke = egui::Stroke::new(2.0, egui::Color32::from_black_alpha(160));
+    painter.rect_filled(
+        scene_rect,
+        egui::CornerRadius::same(8),
+        egui::Color32::from_rgb(24, 29, 38),
+    );
+    painter.rect_stroke(
+        scene_rect,
+        egui::CornerRadius::same(8),
+        egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 105, 135)),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        scene_rect.left_top() + egui::vec2(22.0, 18.0),
+        egui::Align2::LEFT_TOP,
+        "Test: hold left mouse on C, then drag into D",
+        egui::FontId::monospace(17.0),
+        egui::Color32::WHITE,
+    );
 
-                let painter = ui.painter();
-                painter.rect_filled(rect, egui::CornerRadius::same(8), bg);
-                painter.rect_stroke(
-                    rect,
-                    egui::CornerRadius::same(8),
-                    stroke,
-                    egui::StrokeKind::Inside,
-                );
-
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    format!("{}", tile.value),
-                    egui::FontId::proportional(44.0),
-                    egui::Color32::WHITE,
-                );
-            });
+    for (index, tile) in tiles.items.iter().enumerate() {
+        let rect = tile_rects[index].rect;
+        painter.rect_filled(rect, egui::CornerRadius::same(8), tile.color);
+        painter.rect_stroke(
+            rect,
+            egui::CornerRadius::same(8),
+            egui::Stroke::new(2.0, egui::Color32::from_black_alpha(170)),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            rect.left_center() + egui::vec2(24.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            format!("{} {}", tile.label, tile.value),
+            egui::FontId::monospace(48.0),
+            egui::Color32::WHITE,
+        );
     }
 
-    // Click/scroll handling:
-    // - Overlap-all: apply to every tile under the pointer.
-    // - Topmost-only: scan tiles from top to bottom (reverse draw order) and stop on first hit.
-    if let Some(pos) = left_click_pos {
-        match click_mode {
-            ClickMode::OverlapAll => {
-                for tile in &mut scene.rects {
-                    let min = origin + tile.local_pos.to_vec2();
-                    let rect = egui::Rect::from_min_size(min, tile.size);
-                    if rect.contains(pos) {
-                        tile.value += 1;
-                    }
-                }
-            }
-            ClickMode::TopmostOnly => {
-                for i in (0..scene.rects.len()).rev() {
-                    let min = origin + scene.rects[i].local_pos.to_vec2();
-                    let rect = egui::Rect::from_min_size(min, scene.rects[i].size);
-                    if rect.contains(pos) {
-                        scene.rects[i].value += 1;
-                        break;
-                    }
-                }
-            }
-        }
+    if let Some(banner) = repro.banner {
+        let (text, color) = match banner {
+            Banner::Bug(tile) => (
+                format!("BUG: {tile} changed while pointer was over D"),
+                egui::Color32::from_rgb(210, 48, 48),
+            ),
+            Banner::Blocked => (
+                "OK: D blocked the scene input".to_string(),
+                egui::Color32::from_rgb(55, 130, 85),
+            ),
+            Banner::DHandled => (
+                "D handled the UI event".to_string(),
+                egui::Color32::from_rgb(55, 110, 180),
+            ),
+        };
+        let banner_rect = egui::Rect::from_min_size(
+            scene_rect.left_bottom() + egui::vec2(22.0, -74.0),
+            egui::vec2(scene_rect.width() - 44.0, 50.0),
+        );
+        painter.rect_filled(banner_rect, egui::CornerRadius::same(6), color);
+        painter.text(
+            banner_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::monospace(20.0),
+            egui::Color32::WHITE,
+        );
     }
-    if let Some(pos) = right_click_pos {
-        match click_mode {
-            ClickMode::OverlapAll => {
-                for tile in &mut scene.rects {
-                    let min = origin + tile.local_pos.to_vec2();
-                    let rect = egui::Rect::from_min_size(min, tile.size);
-                    if rect.contains(pos) {
-                        tile.value -= 1;
-                    }
+}
+
+fn d_pane(ctx: &egui::Context, rect: egui::Rect, repro: &mut ReproState) {
+    egui::Area::new(egui::Id::new("ui_pane_d"))
+        .order(egui::Order::Tooltip)
+        .fixed_pos(rect.min)
+        .show(ctx, |ui| {
+            let (response_rect, response) =
+                ui.allocate_exact_size(rect.size(), egui::Sense::click());
+
+            let scroll_delta = ui.input(|input| input.raw_scroll_delta.y);
+            let mut handled = false;
+            if response.clicked_by(egui::PointerButton::Primary) {
+                repro.d_value += 1;
+                handled = true;
+            } else if response.clicked_by(egui::PointerButton::Secondary) {
+                repro.d_value -= 1;
+                handled = true;
+            }
+
+            if response.hovered() {
+                if scroll_delta > 0.0 {
+                    repro.d_value += 1;
+                    handled = true;
+                } else if scroll_delta < 0.0 {
+                    repro.d_value -= 1;
+                    handled = true;
                 }
             }
-            ClickMode::TopmostOnly => {
-                for i in (0..scene.rects.len()).rev() {
-                    let min = origin + scene.rects[i].local_pos.to_vec2();
-                    let rect = egui::Rect::from_min_size(min, scene.rects[i].size);
-                    if rect.contains(pos) {
-                        scene.rects[i].value -= 1;
-                        break;
-                    }
-                }
+
+            if handled && repro.banner.is_none() {
+                repro.banner = Some(Banner::DHandled);
             }
-        }
+
+            let painter = ui.painter();
+            painter.rect_filled(
+                response_rect,
+                egui::CornerRadius::same(8),
+                egui::Color32::from_rgb(52, 41, 30),
+            );
+            painter.rect_stroke(
+                response_rect,
+                egui::CornerRadius::same(8),
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(250, 170, 70)),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                response_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("UI pane D\nD: {}", repro.d_value),
+                egui::FontId::monospace(22.0),
+                egui::Color32::WHITE,
+            );
+        });
+}
+
+fn reset_counts(tiles: &mut SceneTiles, repro: &mut ReproState) {
+    for tile in &mut tiles.items {
+        tile.value = 0;
     }
-    if let Some((pos, delta)) = scroll_event {
-        match click_mode {
-            ClickMode::OverlapAll => {
-                for tile in &mut scene.rects {
-                    let min = origin + tile.local_pos.to_vec2();
-                    let rect = egui::Rect::from_min_size(min, tile.size);
-                    if rect.contains(pos) {
-                        tile.value += delta;
-                    }
-                }
-            }
-            ClickMode::TopmostOnly => {
-                for i in (0..scene.rects.len()).rev() {
-                    let min = origin + scene.rects[i].local_pos.to_vec2();
-                    let rect = egui::Rect::from_min_size(min, scene.rects[i].size);
-                    if rect.contains(pos) {
-                        scene.rects[i].value += delta;
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    repro.d_value = 0;
+    repro.banner = None;
+    repro.last_event = "Reset A/B/C/D.".to_string();
+}
+
+fn owner_at(regions: &[OwnerRegion], pos: egui::Pos2) -> InputOwner {
+    regions
+        .iter()
+        .filter(|region| region.rect.contains(pos))
+        .max_by_key(|region| region.priority)
+        .map(|region| region.owner)
+        .unwrap_or_default()
+}
+
+fn topmost_tile_at(tile_rects: &[ScreenTile], pos: egui::Pos2) -> Option<usize> {
+    (0..tile_rects.len())
+        .rev()
+        .find(|&index| tile_rects[index].rect.contains(pos))
 }
